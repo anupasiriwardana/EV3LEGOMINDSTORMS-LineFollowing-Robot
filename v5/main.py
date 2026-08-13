@@ -26,7 +26,6 @@ from datetime import datetime
 from ev3dev2.motor import MoveTank, OUTPUT_B, OUTPUT_C
 from ev3dev2.sensor.lego import ColorSensor, InfraredSensor
 from ev3dev2.sensor import INPUT_2, INPUT_4
-from ev3dev2.console import Console
 
 # ==========================================
 # 1. HARDWARE SETUP
@@ -34,9 +33,6 @@ from ev3dev2.console import Console
 drive = MoveTank(OUTPUT_B, OUTPUT_C)
 color = ColorSensor(INPUT_2)
 sonar = InfraredSensor(INPUT_4) 
-
-screen = Console()
-screen.set_font('Lat15-TerminusBold32x16', reset_console=False)
 
 color.mode = 'COL-REFLECT'
 
@@ -69,9 +65,7 @@ OPPOSING_ACTIONS = {2: 4, 4: 2, 1: 3, 3: 1}
 # ==========================================
 def calibrate_sensor():
     print("\n--- SENSOR CALIBRATION ---")
-    print("Hover over the BLACK and WHITE floor for 10 seconds...")
-    # Send massive text to the robot's screen!
-    # screen.text_at('CALIBRATING!', column=1, row=2)
+    print("Quickly slide the robot over the BLACK line and WHITE floor for 10 seconds...")
     global CALIB_MIN, CALIB_MAX
 
     end_time = time.time() + 10.0
@@ -88,13 +82,7 @@ def calibrate_sensor():
 
     CALIB_MIN = min_val
     CALIB_MAX = max_val
-    print("Black Min: {}, White Max: {}\n".format(CALIB_MIN, CALIB_MAX))
-
-    # Update the EV3 physical screen (Row 2 gets a title, Row 3 gets the numbers)
-    # screen.text_at('Done!', column=1, row=2)
-    # screen.text_at('Min:{} Max:{}'.format(CALIB_MIN, CALIB_MAX), column=1, row=3)
-    
-
+    print("Calibration Complete! Black Min: {}, White Max: {}\n".format(CALIB_MIN, CALIB_MAX))
 
 # ==========================================
 # 4. STATE / REWARD HELPERS
@@ -165,36 +153,31 @@ def execute_action(action, speed=15):
 # 6. OBSTACLE AVOIDANCE
 # ==========================================
 def avoid_obstacle_and_find_path():
-    # screen.text_at('AVOIDING OBSTACLE!', column=1, row=2)
-    print("Obstacle! Executing Triangle Evasion.")
+    print("Obstacle! Doing hardcoded avoidance.")
     drive.off()
     time.sleep(0.5)
 
-    drive.on_for_seconds(-20, -20, 0.5)
+    drive.on_for_degrees(40, -40, 360)
+    drive.on_for_seconds(40, 40, 2)
+    drive.on_for_degrees(-40, 40, 360)
 
-    # 1. Turn slightly right (~60 degrees) to angle away from the obstacle
-    drive.on_for_degrees(20, -20, 220) 
-    
-    # 2. Drive past the obstacle
-    drive.on_for_seconds(20, 20, 2)
-    
-    # 3. Turn heavily left (~120 degrees) to face BACK towards the line
-    drive.on_for_degrees(-20, 20, 480) 
-    
-    screen.text_at('SEARCHING FOR LINE!', column=1, row=2)
+    print("Searching for line...")
     drive.on(20, 20)
 
+    start_time = time.time()
     target_edge = CALIB_MIN + ((CALIB_MAX - CALIB_MIN) * 0.6)
 
-    # 4. Simply drive forward until it hits the black line. 
-    # Because it is angled inward, it is geometrically guaranteed to hit it.
     while color.reflected_light_intensity > target_edge:
+        if time.time() - start_time > 4.0:
+            print("Failsafe triggered! Re-adjusting angle...")
+            drive.on_for_seconds(-20, -20, 1.5)
+            drive.on_for_degrees(30, -30, 90)
+            drive.on(20, 20)
+            start_time = time.time()
         time.sleep(0.05)
 
-    # 5. Stop. The RL script will immediately read "Pure Black" or "Dark Edge"
-    # and automatically steer right to correct itself!
     drive.off()
-    screen.text_at('FOUND THE LINE!', column=1, row=2)
+    print("Found it! Back to RL.")
     time.sleep(0.5)
 
 # ==========================================
@@ -323,16 +306,14 @@ def run_optimized(qtable_path=QTABLE_LATEST):
     calibrate_sensor()
     optimized_q_table = load_q_table(qtable_path)
 
-    screen.text_at('RUNNING...', column=1, row=2)
-
     print("Running with trained policy from {}".format(qtable_path))
     last_action = 0
 
     while True:
-        if sonar.proximity < 4:
-            avoid_obstacle_and_find_path()
-            last_action = 0
-            continue
+        # if sonar.proximity < 25:
+        #     avoid_obstacle_and_find_path()
+        #     last_action = 0
+        #     continue
 
         state, _ = get_state(last_action)
         values = optimized_q_table[state]
@@ -360,5 +341,5 @@ def run_optimized(qtable_path=QTABLE_LATEST):
 # EXECUTE
 # ==========================================
 if __name__ == '__main__':
-    # train_robot(episodes=50, warm_start=True, steps_per_episode=100)
-    run_optimized()
+    train_robot(episodes=50, warm_start=True, steps_per_episode=100)
+    # run_optimized()
