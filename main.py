@@ -25,14 +25,14 @@ import csv
 from datetime import datetime
 from ev3dev2.motor import MoveTank, OUTPUT_B, OUTPUT_C
 from ev3dev2.sensor.lego import ColorSensor, InfraredSensor
-from ev3dev2.sensor import INPUT_2, INPUT_4
+from ev3dev2.sensor import INPUT_1, INPUT_4
 from ev3dev2.console import Console
 
 # ==========================================
 # 1. HARDWARE SETUP
 # ==========================================
 drive = MoveTank(OUTPUT_B, OUTPUT_C)
-color = ColorSensor(INPUT_2)
+color = ColorSensor(INPUT_1)
 sonar = InfraredSensor(INPUT_4) 
 
 screen = Console()
@@ -170,16 +170,20 @@ def avoid_obstacle_and_find_path():
     drive.off()
     time.sleep(0.5)
 
-    drive.on_for_seconds(-20, -20, 0.5)
+    drive.on_for_seconds(-20, -20, 1)
 
     # 1. Turn slightly right (~60 degrees) to angle away from the obstacle
     drive.on_for_degrees(20, -20, 220) 
     
     # 2. Drive past the obstacle
-    drive.on_for_seconds(20, 20, 2)
+    drive.on_for_seconds(20, 20, 3)
+
+    drive.on_for_seconds(10, 20, 3)
     
     # 3. Turn heavily left (~120 degrees) to face BACK towards the line
-    drive.on_for_degrees(-20, 20, 480) 
+    drive.on_for_degrees(0, 20, 480) 
+
+    drive.on_for_seconds(20, 20, 2)
     
     screen.text_at('SEARCHING FOR LINE!', column=1, row=2)
     drive.on(20, 20)
@@ -324,16 +328,23 @@ def run_optimized(qtable_path=QTABLE_LATEST):
     optimized_q_table = load_q_table(qtable_path)
 
     screen.text_at('RUNNING...', column=1, row=2)
-
     print("Running with trained policy from {}".format(qtable_path))
     last_action = 0
+    
+    # Track left and right spins independently
+    consecutive_lefts = 0
+    consecutive_rights = 0
 
     while True:
+        # 1. Check for physical obstacles
         if sonar.proximity < 4:
             avoid_obstacle_and_find_path()
             last_action = 0
+            consecutive_lefts = 0
+            consecutive_rights = 0
             continue
 
+        # 2. Get Q-Table Action
         state, _ = get_state(last_action)
         values = optimized_q_table[state]
 
@@ -344,18 +355,55 @@ def run_optimized(qtable_path=QTABLE_LATEST):
 
         best_action = values.index(best_value)
 
+        # 3. Apply Hysteresis (Stubbornness)
         if best_action != last_action:
             current_value = values[last_action]
             if best_value - current_value < HYSTERESIS_MARGIN:
                 best_action = last_action
 
+        # --- THE DIZZINESS OVERRIDE ---
+        if best_action in [1, 2]: # Left Turns
+            consecutive_lefts += 1
+            consecutive_rights = 0 
+        elif best_action in [3, 4]: # Right Turns
+            consecutive_rights += 1
+            consecutive_lefts = 0 
+        else: # Forward (0) or Reverse (5)
+            consecutive_lefts = 0
+            consecutive_rights = 0
+
+        # If it spins endlessly in one specific direction
+        if consecutive_lefts > 130 or consecutive_rights > 130:
+            print("Dizziness detected! Breaking out of the spin.")
+            screen.text_at('ESCAPING VOID!', column=1, row=2)
+            
+            # Force the robot to drive straight out of the void
+            drive.on(20, 20)
+            
+            # Calculate the threshold for "White" (Bucket 4)
+            span = max(CALIB_MAX - CALIB_MIN, 1)
+            white_threshold = CALIB_MIN + (span * 0.8)
+            
+            # Keep driving forward until the sensor sees the white floor
+            while color.reflected_light_intensity < white_threshold:
+                time.sleep(0.05)
+                
+            drive.off() # Stop once white is found
+            
+            # Reset variables and resume normal behavior
+            consecutive_lefts = 0 
+            consecutive_rights = 0
+            last_action = 0
+            screen.text_at('RUNNING...', column=1, row=2)
+            continue 
+        # ----------------------------------------
+
+        # 4. Calculate Speed and Execute
         speed = min(20, 10 + confidence * 2)
         speed = max(5, speed)  
 
         execute_action(best_action, speed=speed)
         last_action = best_action
-
-
 # ==========================================
 # EXECUTE
 # ==========================================
