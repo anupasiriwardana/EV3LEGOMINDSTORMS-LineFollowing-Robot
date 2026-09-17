@@ -56,24 +56,41 @@ NUM_STATES = NUM_LINE_STATES * NUM_ACTIONS
 OSCILLATION_PENALTY = -3        
 HYSTERESIS_MARGIN = 0.5         
 
-CALIB_MIN = 2
-CALIB_MAX = 32
-
 QTABLE_LATEST = 'trained_qtable_latest.json'
 LOG_FILE = 'training_log.csv'
 
 OPPOSING_ACTIONS = {2: 4, 4: 2, 1: 3, 3: 1}  
 
 # ==========================================
-# 3. DYNAMIC CALIBRATION
+# 3. SENSOR CALIBRATION CONFIGURATION
 # ==========================================
-def calibrate_sensor():
-    print("\n--- SENSOR CALIBRATION ---")
-    print("Hover over the BLACK and WHITE floor for 10 seconds...")
-    # Send massive text to the robot's screen!
-    # screen.text_at('CALIBRATING!', column=1, row=2)
-    global CALIB_MIN, CALIB_MAX
+# TOGGLE THIS: True for 10-second automatic reading, False for hardcoded values.
+USE_AUTO_CALIBRATION = False  
 
+# Set your hardcoded values here (only used if USE_AUTO_CALIBRATION is False)
+HARDCODED_MIN = 2
+HARDCODED_MAX = 32
+
+# These are the global variables the rest of the script actually uses.
+# They will be overwritten by the calibrate_sensor() function based on your settings above.
+CALIB_MIN = 0 
+CALIB_MAX = 100 
+
+def calibrate_sensor():
+    global CALIB_MIN, CALIB_MAX
+    
+    # METHOD 1: Hardcoded Values
+    if not USE_AUTO_CALIBRATION:
+        print("\n--- SENSOR CALIBRATION (HARDCODED) ---")
+        CALIB_MIN = HARDCODED_MIN
+        CALIB_MAX = HARDCODED_MAX
+        print("Using manual values -> Black Min: {}, White Max: {}\n".format(CALIB_MIN, CALIB_MAX))
+        return # Exit the function early so it skips the 10-second loop
+
+    # METHOD 2: Automatic 10-Second Calibration
+    print("\n--- SENSOR CALIBRATION (AUTOMATIC) ---")
+    print("Hover over the BLACK and WHITE floor for 10 seconds...")
+    
     end_time = time.time() + 10.0
     min_val = 100
     max_val = 0
@@ -89,12 +106,6 @@ def calibrate_sensor():
     CALIB_MIN = min_val
     CALIB_MAX = max_val
     print("Black Min: {}, White Max: {}\n".format(CALIB_MIN, CALIB_MAX))
-
-    # Update the EV3 physical screen (Row 2 gets a title, Row 3 gets the numbers)
-    # screen.text_at('Done!', column=1, row=2)
-    # screen.text_at('Min:{} Max:{}'.format(CALIB_MIN, CALIB_MAX), column=1, row=3)
-    
-
 
 # ==========================================
 # 4. STATE / REWARD HELPERS
@@ -127,10 +138,8 @@ def get_reward(bucket, last_action, action):
 
     # 2. The Smart Progress Bonus
     elif action == 0:
-        # Only reward forward momentum if we are actually near the edge!
         if bucket in [1, 2, 3]: 
             reward += 2   
-        # If we are lost in the black (0) or white (4), penalize forward driving!
         else:
             reward -= 5
 
@@ -147,42 +156,32 @@ def execute_action(action, speed=15):
     if action == 0:    # Forward
         drive.on(speed, speed)
     elif action == 1:  # Slight Left
-        drive.on(0, speed) # Stop left tread, drive right
-    elif action == 2:  # Hard Left Pivot (For Treads!)
+        drive.on(0, speed) 
+    elif action == 2:  # Hard Left Pivot
         drive.on(-speed, speed) 
     elif action == 3:  # Slight Right
-        drive.on(speed, 0) # Stop right tread, drive left
-    elif action == 4:  # Hard Right Pivot (For Treads!)
+        drive.on(speed, 0) 
+    elif action == 4:  # Hard Right Pivot
         drive.on(speed, -speed)
     elif action == 5:  # Reverse
         drive.on(-speed, -speed)
 
-    # Increase execution time slightly to give treads time to grip and turn
-    # Increase execution time slightly to give treads time to grip and turn
     time.sleep(0.05)
 
 # ==========================================
 # 6. OBSTACLE AVOIDANCE
 # ==========================================
 def avoid_obstacle_and_find_path():
-    # screen.text_at('AVOIDING OBSTACLE!', column=1, row=2)
     print("Obstacle! Executing Triangle Evasion.")
     drive.off()
     time.sleep(0.5)
 
     drive.on_for_seconds(-20, -20, 1)
 
-    # 1. Turn slightly right (~60 degrees) to angle away from the obstacle
     drive.on_for_degrees(20, -20, 220) 
-    
-    # 2. Drive past the obstacle
     drive.on_for_seconds(20, 20, 3)
-
     drive.on_for_seconds(10, 20, 3)
-    
-    # 3. Turn heavily left (~120 degrees) to face BACK towards the line
     drive.on_for_degrees(0, 20, 480) 
-
     drive.on_for_seconds(20, 20, 2)
     
     screen.text_at('SEARCHING FOR LINE!', column=1, row=2)
@@ -190,13 +189,9 @@ def avoid_obstacle_and_find_path():
 
     target_edge = CALIB_MIN + ((CALIB_MAX - CALIB_MIN) * 0.6)
 
-    # 4. Simply drive forward until it hits the black line. 
-    # Because it is angled inward, it is geometrically guaranteed to hit it.
     while color.reflected_light_intensity > target_edge:
         time.sleep(0.05)
 
-    # 5. Stop. The RL script will immediately read "Pure Black" or "Dark Edge"
-    # and automatically steer right to correct itself!
     drive.off()
     screen.text_at('FOUND THE LINE!', column=1, row=2)
     time.sleep(0.5)
@@ -231,16 +226,13 @@ def log_episode(episode, total_reward, epsilon):
             writer.writerow(['episode', 'total_reward', 'epsilon'])
         writer.writerow([episode, round(total_reward, 3), round(epsilon, 4)])
 
-# --- NEW FORMATTED PRINT FUNCTION ---
 def print_current_q_table(q_table):
-    """Prints a neatly formatted grid of the Q-Table to the terminal."""
     print("\n" + "="*65)
     print("                 CURRENT Q-TABLE SNAPSHOT")
     print("="*65)
     print(" State |   Fwd | S-Lft | H-Lft | S-Rgt | H-Rgt |   Rev ")
     print("-" * 65)
     for s, row in enumerate(q_table):
-        # Format each number in the row to perfectly align with 1 decimal place
         row_str = " | ".join(["{:5.1f}".format(val) for val in row])
         print(" S_{:02d}  | {}".format(s, row_str))
     print("="*65 + "\n")
@@ -292,11 +284,9 @@ def train_robot(episodes=75, warm_start=True, steps_per_episode=50):
             old_value = q_table[state][action]
             future_max = max(q_table[new_state])
             
-            # The Q-Learning Equation
             new_value = old_value + ALPHA * (reward + GAMMA * future_max - old_value)
             q_table[state][action] = new_value
             
-            # --- NEW LIVE UPDATE PRINT ---
             print("Step {:03d} [{}] | State: {:02d} -> Action: {} | Reward: {:+.1f} | Q: {:+.2f} -> {:+.2f}".format(
                 step + 1, action_type, state, action, reward, old_value, new_value))
 
@@ -309,14 +299,11 @@ def train_robot(episodes=75, warm_start=True, steps_per_episode=50):
             EPSILON *= EPSILON_DECAY
 
         log_episode(episode + 1, episode_reward, EPSILON)
-        
-        # --- PRINT THE FULL TABLE AT THE END OF THE EPISODE ---
         print_current_q_table(q_table)
-        
         print("Episode {} done. Total reward: {:.1f}, epsilon: {:.3f}\n".format(
             episode + 1, episode_reward, EPSILON))
         
-        time.sleep(1) # Brief pause so you can read the table before the next episode starts
+        time.sleep(1) 
 
     save_q_table(q_table, episodes)
 
@@ -331,12 +318,10 @@ def run_optimized(qtable_path=QTABLE_LATEST):
     print("Running with trained policy from {}".format(qtable_path))
     last_action = 0
     
-    # Track left and right spins independently
     consecutive_lefts = 0
     consecutive_rights = 0
 
     while True:
-        # 1. Check for physical obstacles
         if sonar.proximity < 4:
             avoid_obstacle_and_find_path()
             last_action = 0
@@ -344,7 +329,6 @@ def run_optimized(qtable_path=QTABLE_LATEST):
             consecutive_rights = 0
             continue
 
-        # 2. Get Q-Table Action
         state, _ = get_state(last_action)
         values = optimized_q_table[state]
 
@@ -355,55 +339,47 @@ def run_optimized(qtable_path=QTABLE_LATEST):
 
         best_action = values.index(best_value)
 
-        # 3. Apply Hysteresis (Stubbornness)
         if best_action != last_action:
             current_value = values[last_action]
             if best_value - current_value < HYSTERESIS_MARGIN:
                 best_action = last_action
 
-        # --- THE DIZZINESS OVERRIDE ---
-        if best_action in [1, 2]: # Left Turns
+        if best_action in [1, 2]: 
             consecutive_lefts += 1
             consecutive_rights = 0 
-        elif best_action in [3, 4]: # Right Turns
+        elif best_action in [3, 4]: 
             consecutive_rights += 1
             consecutive_lefts = 0 
-        else: # Forward (0) or Reverse (5)
+        else: 
             consecutive_lefts = 0
             consecutive_rights = 0
 
-        # If it spins endlessly in one specific direction
         if consecutive_lefts > 130 or consecutive_rights > 130:
             print("Dizziness detected! Breaking out of the spin.")
             screen.text_at('ESCAPING VOID!', column=1, row=2)
             
-            # Force the robot to drive straight out of the void
             drive.on(20, 20)
             
-            # Calculate the threshold for "White" (Bucket 4)
             span = max(CALIB_MAX - CALIB_MIN, 1)
             white_threshold = CALIB_MIN + (span * 0.8)
             
-            # Keep driving forward until the sensor sees the white floor
             while color.reflected_light_intensity < white_threshold:
                 time.sleep(0.05)
                 
-            drive.off() # Stop once white is found
+            drive.off() 
             
-            # Reset variables and resume normal behavior
             consecutive_lefts = 0 
             consecutive_rights = 0
             last_action = 0
             screen.text_at('RUNNING...', column=1, row=2)
             continue 
-        # ----------------------------------------
 
-        # 4. Calculate Speed and Execute
         speed = min(20, 10 + confidence * 2)
         speed = max(5, speed)  
 
         execute_action(best_action, speed=speed)
         last_action = best_action
+
 # ==========================================
 # EXECUTE
 # ==========================================
