@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import json
 import random
 import time
@@ -6,13 +7,13 @@ import csv
 from datetime import datetime
 from ev3dev2.motor import MoveTank, OUTPUT_B, OUTPUT_C
 from ev3dev2.sensor.lego import ColorSensor, InfraredSensor
-from ev3dev2.sensor import INPUT_1, INPUT_4
+from ev3dev2.sensor import INPUT_2, INPUT_4
 from ev3dev2.console import Console
 
 
 # H/W SETUP
 drive = MoveTank(OUTPUT_B, OUTPUT_C)
-color = ColorSensor(INPUT_1)
+color = ColorSensor(INPUT_2)
 sonar = InfraredSensor(INPUT_4) 
 
 screen = Console()
@@ -45,7 +46,7 @@ OPPOSING_ACTIONS = {2: 4, 4: 2, 1: 3, 3: 1}
 USE_AUTO_CALIBRATION = False  
 
 # Set the values only if USE_AUTO_CALIBRATION is False
-HARDCODED_MIN = 2
+HARDCODED_MIN = 3
 HARDCODED_MAX = 32
 
 # will be overwritten by the calibrate_sensor() func
