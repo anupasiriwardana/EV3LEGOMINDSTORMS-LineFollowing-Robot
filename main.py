@@ -1,22 +1,3 @@
-#!/usr/bin/env python3
-"""
-Optimized EV3 line-following robot using Q-learning.
-
-Changes vs. the original version:
-  1. Continuous reward shaping (based on raw sensor error, not just bucket).
-  2. State now includes "last action" -> reduces zig-zag/oscillation.
-  3. Explicit oscillation penalty (hard-left right after hard-right, etc).
-  4. Per-episode reward logging to a CSV for progress tracking.
-  5. Warm-start retraining: loads existing table instead of always
-     starting from zero, and lowers epsilon automatically for fine-tuning.
-  6. Confidence-based speed scaling at run time (faster when sure,
-     slower when the top two actions are close in value).
-  7. Hysteresis on action switching at run time, to avoid chatter from
-     sensor noise/glare.
-  8. Q-table files are saved with an episode-count + timestamp suffix
-     so old runs aren't overwritten, plus a stable "latest" copy.
-"""
-
 import json
 import random
 import time
@@ -28,9 +9,8 @@ from ev3dev2.sensor.lego import ColorSensor, InfraredSensor
 from ev3dev2.sensor import INPUT_1, INPUT_4
 from ev3dev2.console import Console
 
-# ==========================================
-# 1. HARDWARE SETUP
-# ==========================================
+
+# H/W SETUP
 drive = MoveTank(OUTPUT_B, OUTPUT_C)
 color = ColorSensor(INPUT_1)
 sonar = InfraredSensor(INPUT_4) 
@@ -40,9 +20,8 @@ screen.set_font('Lat15-TerminusBold32x16', reset_console=False)
 
 color.mode = 'COL-REFLECT'
 
-# ==========================================
-# 2. Q-LEARNING PARAMETERS
-# ==========================================
+
+# Q-LEARNING PARAMETERS
 ALPHA = 0.1       
 GAMMA = 0.9       
 EPSILON = 0.9     
@@ -61,34 +40,29 @@ LOG_FILE = 'training_log.csv'
 
 OPPOSING_ACTIONS = {2: 4, 4: 2, 1: 3, 3: 1}  
 
-# ==========================================
-# 3. SENSOR CALIBRATION CONFIGURATION
-# ==========================================
-# TOGGLE THIS: True for 10-second automatic reading, False for hardcoded values.
+#  True --> 10-second automatic reading
+#  False --> hardcoded values
 USE_AUTO_CALIBRATION = False  
 
-# Set your hardcoded values here (only used if USE_AUTO_CALIBRATION is False)
+# Set the values only if USE_AUTO_CALIBRATION is False
 HARDCODED_MIN = 2
 HARDCODED_MAX = 32
 
-# These are the global variables the rest of the script actually uses.
-# They will be overwritten by the calibrate_sensor() function based on your settings above.
+# will be overwritten by the calibrate_sensor() func
 CALIB_MIN = 0 
 CALIB_MAX = 100 
 
 def calibrate_sensor():
     global CALIB_MIN, CALIB_MAX
     
-    # METHOD 1: Hardcoded Values
     if not USE_AUTO_CALIBRATION:
         print("\n--- SENSOR CALIBRATION (HARDCODED) ---")
         CALIB_MIN = HARDCODED_MIN
         CALIB_MAX = HARDCODED_MAX
         print("Using manual values -> Black Min: {}, White Max: {}\n".format(CALIB_MIN, CALIB_MAX))
-        return # Exit the function early so it skips the 10-second loop
+        return 
 
-    # METHOD 2: Automatic 10-Second Calibration
-    print("\n--- SENSOR CALIBRATION (AUTOMATIC) ---")
+    #automatic sensor calibration
     print("Hover over the BLACK and WHITE floor for 10 seconds...")
     
     end_time = time.time() + 10.0
@@ -107,9 +81,8 @@ def calibrate_sensor():
     CALIB_MAX = max_val
     print("Black Min: {}, White Max: {}\n".format(CALIB_MIN, CALIB_MAX))
 
-# ==========================================
-# 4. STATE / REWARD HELPERS
-# ==========================================
+
+# STATE / REWARD HELPERS
 def get_line_bucket():
     val = color.reflected_light_intensity
     span = max(CALIB_MAX - CALIB_MIN, 1)
@@ -132,26 +105,24 @@ def get_reward(bucket, last_action, action):
     error = abs(val - target) / span  
     reward = 10 - (error * 15)        
 
-    # 1. The Anti-Cheat: Heavily penalize reversing
+    # Heavily penalize reversing
     if action == 5:
         reward -= 15  
 
-    # 2. The Smart Progress Bonus
+    # The Smart Progress Bonus
     elif action == 0:
         if bucket in [1, 2, 3]: 
             reward += 2   
         else:
             reward -= 5
 
-    # 3. The Anti-Wobble
+    # The Anti-Wobble
     if OPPOSING_ACTIONS.get(last_action) == action:
         reward += OSCILLATION_PENALTY
 
     return reward
 
-# ==========================================
-# 5. ACTIONS
-# ==========================================
+# ACTIONS
 def execute_action(action, speed=15):
     if action == 0:    # Forward
         drive.on(speed, speed)
@@ -168,11 +139,10 @@ def execute_action(action, speed=15):
 
     time.sleep(0.05)
 
-# ==========================================
-# 6. OBSTACLE AVOIDANCE
-# ==========================================
+
+# OBSTACLE AVOIDANCE
 def avoid_obstacle_and_find_path():
-    print("Obstacle! Executing Triangle Evasion.")
+    print("Obstacle!")
     drive.off()
     time.sleep(0.5)
 
@@ -184,7 +154,8 @@ def avoid_obstacle_and_find_path():
     drive.on_for_degrees(0, 20, 480) 
     drive.on_for_seconds(20, 20, 2)
     
-    screen.text_at('SEARCHING FOR LINE!', column=1, row=2)
+    print("searching for line!")
+    # screen.text_at('SEARCHING FOR LINE!', column=1, row=2)
     drive.on(20, 20)
 
     target_edge = CALIB_MIN + ((CALIB_MAX - CALIB_MIN) * 0.6)
@@ -193,12 +164,12 @@ def avoid_obstacle_and_find_path():
         time.sleep(0.05)
 
     drive.off()
-    screen.text_at('FOUND THE LINE!', column=1, row=2)
+    print("FOUND THE LINE!")
+    # screen.text_at('FOUND THE LINE!', column=1, row=2)
     time.sleep(0.5)
 
-# ==========================================
-# 7. Q-TABLE LOAD / SAVE / PRINT HELPERS
-# ==========================================
+
+# Q-TABLE LOAD / SAVE / PRINT HELPERS
 def new_q_table():
     return [[0.0 for _ in range(NUM_ACTIONS)] for _ in range(NUM_STATES)]
 
@@ -237,9 +208,8 @@ def print_current_q_table(q_table):
         print(" S_{:02d}  | {}".format(s, row_str))
     print("="*65 + "\n")
 
-# ==========================================
-# 8. TRAINING LOOP 
-# ==========================================
+
+# TRAINING 
 def train_robot(episodes=75, warm_start=True, steps_per_episode=50):
     global EPSILON
 
@@ -307,9 +277,8 @@ def train_robot(episodes=75, warm_start=True, steps_per_episode=50):
 
     save_q_table(q_table, episodes)
 
-# ==========================================
-# 9. OPTIMIZED RUN 
-# ==========================================
+
+# OPTIMIZED RUN 
 def run_optimized(qtable_path=QTABLE_LATEST):
     calibrate_sensor()
     optimized_q_table = load_q_table(qtable_path)
@@ -380,9 +349,8 @@ def run_optimized(qtable_path=QTABLE_LATEST):
         execute_action(best_action, speed=speed)
         last_action = best_action
 
-# ==========================================
+
 # EXECUTE
-# ==========================================
 if __name__ == '__main__':
     # train_robot(episodes=50, warm_start=True, steps_per_episode=100)
     run_optimized()
