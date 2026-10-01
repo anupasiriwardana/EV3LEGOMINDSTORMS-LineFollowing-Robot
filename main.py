@@ -149,15 +149,16 @@ def avoid_obstacle_and_find_path():
 
     drive.on_for_seconds(-20, -20, 1)
 
-    drive.on_for_degrees(20, -20, 220) 
-    drive.on_for_seconds(20, 20, 3)
-    drive.on_for_seconds(10, 20, 3)
-    drive.on_for_degrees(0, 20, 480) 
-    drive.on_for_seconds(20, 20, 2)
+    drive.on_for_degrees(20, -20, 380)
+    # drive.on_for_degrees(20, -20, 220) 
+    # drive.on_for_seconds(20, 20, 3)
+    # drive.on_for_seconds(10, 20, 3)
+    # drive.on_for_degrees(0, 20, 480) 
+    drive.on_for_seconds(20, 20, 1)
     
     print("searching for line!")
     # screen.text_at('SEARCHING FOR LINE!', column=1, row=2)
-    drive.on(20, 20)
+    # drive.on(20, 20)
 
     target_edge = CALIB_MIN + ((CALIB_MAX - CALIB_MIN) * 0.6)
 
@@ -292,7 +293,7 @@ def run_optimized(qtable_path=QTABLE_LATEST):
     consecutive_rights = 0
 
     while True:
-        if sonar.proximity < 4:
+        if sonar.proximity < 8:
             avoid_obstacle_and_find_path()
             last_action = 0
             consecutive_lefts = 0
